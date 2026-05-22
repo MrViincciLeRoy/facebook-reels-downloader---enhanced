@@ -17,8 +17,26 @@ async def scrape_reels(channel, url, max_count=None):
         context = await browser.new_context()
 
         if os.path.exists("fb_cookie.json"):
-            cookies = json.load(open("fb_cookie.json"))
-            await context.add_cookies(cookies)
+            raw = open("fb_cookie.json").read().strip()
+            if not raw:
+                print("⚠️ fb_cookie.json is empty — proceeding without cookies")
+            else:
+                try:
+                    cookies = json.loads(raw)
+                    clean_cookies = []
+                    for c in cookies:
+                        clean_cookies.append({
+                            "name": c["name"],
+                            "value": c["value"],
+                            "domain": c.get("domain", ".facebook.com"),
+                            "path": c.get("path", "/"),
+                            "secure": c.get("secure", False),
+                            "httpOnly": c.get("httpOnly", False),
+                        })
+                    await context.add_cookies(clean_cookies)
+                    print(f"✅ Loaded {len(clean_cookies)} cookies")
+                except Exception as e:
+                    print(f"⚠️ Failed to load cookies: {e} — proceeding without")
 
         page = await context.new_page()
         await page.goto("https://facebook.com")
