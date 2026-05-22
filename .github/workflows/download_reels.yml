@@ -36,7 +36,7 @@ jobs:
       - name: Write cookies
         env:
           FACEBOOK_COOKIES: ${{ secrets.FACEBOOK_COOKIES }}
-        run: python -c "import os; open('fb_cookie.json','w').write(os.environ['FACEBOOK_COOKIES'])"
+        run: python -c "import os; open('fb_cookie.txt','w').write(os.environ['FACEBOOK_COOKIES'])"
 
       - name: Run downloader
         run: |
