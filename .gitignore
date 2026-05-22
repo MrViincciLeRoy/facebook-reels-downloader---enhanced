@@ -1,5 +1,8 @@
-fb_cookies.json
+fb_cookie.json
+cookies.txt
 __pycache__/
 *.py[cod]
 venv/
 .env
+output/
+failed.txt
