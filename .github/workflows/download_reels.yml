@@ -34,7 +34,9 @@ jobs:
           playwright install-deps chromium
 
       - name: Write cookies
-        run: echo '${{ secrets.FACEBOOK_COOKIES }}' > fb_cookie.json
+        env:
+          FACEBOOK_COOKIES: ${{ secrets.FACEBOOK_COOKIES }}
+        run: python -c "import os; open('fb_cookie.json','w').write(os.environ['FACEBOOK_COOKIES'])"
 
       - name: Run downloader
         run: |
