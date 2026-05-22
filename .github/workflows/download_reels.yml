@@ -1,0 +1,124 @@
+name: Download Facebook Reels
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel_name:
+        description: 'Channel name (used for output folder)'
+        required: true
+        default: 'SALivingOfficial'
+      channel_url:
+        description: 'Facebook Reels URL'
+        required: true
+        default: 'https://www.facebook.com/SALivingOfficial/reels/'
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install selenium yt-dlp
+          sudo apt-get install -y chromium-browser chromium-chromedriver
+
+      - name: Write cookies file
+        run: |
+          echo "${{ secrets.FACEBOOK_COOKIES }}" > cookies.txt
+
+      - name: Patch reels.py for headless + cookies
+        run: |
+          cat > reels_patched.py << 'EOF'
+          from selenium import webdriver
+          from selenium.webdriver.common.by import By
+          from selenium.webdriver.chrome.options import Options
+          from time import sleep
+          import os
+          import subprocess
+          import csv
+          import sys
+
+          options = Options()
+          options.add_argument("--headless")
+          options.add_argument("--no-sandbox")
+          options.add_argument("--disable-dev-shm-usage")
+          options.add_argument("--disable-gpu")
+          options.binary_location = "/usr/bin/chromium-browser"
+
+          driver = webdriver.Chrome(options=options)
+          driver.maximize_window()
+
+          chanel = sys.argv[1]
+          url = sys.argv[2]
+          driver.get(url)
+
+          sleep(5)
+
+          # Close login popup if it appears
+          try:
+              element = driver.find_element(By.XPATH, "//div[@aria-label='Close']")
+              element.click()
+          except:
+              pass
+
+          scroll_steps = 100
+          scroll_interval = 4
+          prev_scroll_position = 0
+
+          for _ in range(scroll_steps):
+              driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+              sleep(scroll_interval)
+              curr_scroll_position = driver.execute_script("return window.pageYOffset;")
+              if curr_scroll_position == prev_scroll_position:
+                  print("Reached the bottom of the page.")
+                  break
+              prev_scroll_position = curr_scroll_position
+
+          a_elements = driver.find_elements(By.CSS_SELECTOR, 'a')
+
+          output_dir = os.path.join("output", chanel)
+          os.makedirs(output_dir, exist_ok=True)
+
+          csv_path = os.path.join("output", f"{chanel}.csv")
+          with open(csv_path, "w") as f:
+              writer = csv.writer(f)
+              for element in a_elements:
+                  href = element.get_attribute('href')
+                  if href and '/reel/' in href:
+                      writer.writerow([href.split('/?s=')[0]])
+
+          driver.quit()
+
+          print(f"Saved reel URLs to {csv_path}")
+
+          args = [
+              "yt-dlp",
+              "--cookies", "cookies.txt",
+              "-f", "best",
+              "-a", csv_path,
+              "--output", os.path.join(output_dir, "%(id)s.%(ext)s")
+          ]
+          process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+          for line in iter(lambda: process.stdout.readline(), b''):
+              print(line.decode("utf-8"))
+          process.wait()
+          EOF
+
+      - name: Run downloader
+        run: |
+          python reels_patched.py "${{ github.event.inputs.channel_name }}" "${{ github.event.inputs.channel_url }}"
+
+      - name: Upload videos as artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: reels-${{ github.event.inputs.channel_name }}
+          path: output/
+          retention-days: 7
