@@ -8,6 +8,53 @@ import json
 import re
 
 
+def parse_cookies_file(path):
+    raw = open(path).read().strip()
+    if not raw:
+        return None, "empty file"
+
+    # Try JSON first
+    try:
+        cookies = json.loads(raw)
+        clean = []
+        for c in cookies:
+            clean.append({
+                "name": c["name"],
+                "value": c["value"],
+                "domain": c.get("domain", ".facebook.com"),
+                "path": c.get("path", "/"),
+                "secure": c.get("secure", False),
+                "httpOnly": c.get("httpOnly", False),
+            })
+        return clean, None
+    except json.JSONDecodeError:
+        pass
+
+    # Try Netscape txt format
+    try:
+        clean = []
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split("\t")
+            if len(parts) < 7:
+                continue
+            clean.append({
+                "domain": parts[0],
+                "path": parts[2],
+                "secure": parts[3].upper() == "TRUE",
+                "name": parts[5],
+                "value": parts[6],
+                "httpOnly": False,
+            })
+        if clean:
+            return clean, None
+        return None, "no valid cookie lines found"
+    except Exception as e:
+        return None, str(e)
+
+
 async def scrape_reels(channel, url, max_count=None):
     async with async_playwright() as p:
         browser = await p.chromium.launch(
@@ -16,27 +63,21 @@ async def scrape_reels(channel, url, max_count=None):
         )
         context = await browser.new_context()
 
-        if os.path.exists("fb_cookie.json"):
-            raw = open("fb_cookie.json").read().strip()
-            if not raw:
-                print("⚠️ fb_cookie.json is empty — proceeding without cookies")
+        cookie_file = None
+        for f in ["fb_cookie.json", "fb_cookie.txt", "cookies.json", "cookies.txt"]:
+            if os.path.exists(f):
+                cookie_file = f
+                break
+
+        if cookie_file:
+            cookies, err = parse_cookies_file(cookie_file)
+            if err:
+                print(f"⚠️ Cookie load failed ({cookie_file}): {err} — proceeding without")
             else:
-                try:
-                    cookies = json.loads(raw)
-                    clean_cookies = []
-                    for c in cookies:
-                        clean_cookies.append({
-                            "name": c["name"],
-                            "value": c["value"],
-                            "domain": c.get("domain", ".facebook.com"),
-                            "path": c.get("path", "/"),
-                            "secure": c.get("secure", False),
-                            "httpOnly": c.get("httpOnly", False),
-                        })
-                    await context.add_cookies(clean_cookies)
-                    print(f"✅ Loaded {len(clean_cookies)} cookies")
-                except Exception as e:
-                    print(f"⚠️ Failed to load cookies: {e} — proceeding without")
+                await context.add_cookies(cookies)
+                print(f"✅ Loaded {len(cookies)} cookies from {cookie_file}")
+        else:
+            print("⚠️ No cookie file found — proceeding without")
 
         page = await context.new_page()
         await page.goto("https://facebook.com")
@@ -111,6 +152,10 @@ def rename_by_engagement(output_dir):
 
 
 def download_reels(channel, reel_urls):
+    if not reel_urls:
+        print("❌ No reels found. Check cookies or URL.")
+        sys.exit(1)
+
     output_dir = os.path.join("output", channel)
     os.makedirs(output_dir, exist_ok=True)
     csv_path = os.path.join("output", f"{channel}.csv")
@@ -133,8 +178,14 @@ def download_reels(channel, reel_urls):
             "--sleep-interval", "2",
             "--max-sleep-interval", "5"
         ]
-        if os.path.exists("cookies.txt"):
-            args += ["--cookies", "cookies.txt"]
+
+        cookie_file = None
+        for f in ["cookies.txt", "fb_cookie.txt", "fb_cookie.json"]:
+            if os.path.exists(f):
+                cookie_file = f
+                break
+        if cookie_file:
+            args += ["--cookies", cookie_file]
 
         print(f"({i}/{total}) Downloading: {url}")
         result = subprocess.run(args, capture_output=True, text=True)
@@ -151,8 +202,8 @@ def download_reels(channel, reel_urls):
             "--output", os.path.join(output_dir, "%(title).100s [%(id)s].%(ext)s"),
             "--no-playlist", "--ignore-errors", "--verbose"
         ]
-        if os.path.exists("cookies.txt"):
-            fallback += ["--cookies", "cookies.txt"]
+        if cookie_file:
+            fallback += ["--cookies", cookie_file]
 
         fb_result = subprocess.run(fallback, capture_output=True, text=True)
         if fb_result.returncode == 0:
